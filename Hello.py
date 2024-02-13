@@ -1,51 +1,56 @@
-# Copyright (c) Streamlit Inc. (2018-2022) Snowflake Inc. (2022)
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-import streamlit as st
-from streamlit.logger import get_logger
-
-LOGGER = get_logger(__name__)
+import datetime
+from unittest.mock import patch
+from streamlit.testing.v1 import AppTest
+from openai.types.chat import ChatCompletionMessage
+from openai.types.chat.chat_completion import ChatCompletion, Choice
 
 
-def run():
-    st.set_page_config(
-        page_title="Hello",
-        page_icon="👋",
-    )
-
-    st.write("# Welcome to Streamlit! 👋")
-
-    st.sidebar.success("Select a demo above.")
-
-    st.markdown(
-        """
-        Streamlit is an open-source app framework built specifically for
-        Machine Learning and Data Science projects.
-        **👈 Select a demo from the sidebar** to see some examples
-        of what Streamlit can do!
-        ### Want to learn more?
-        - Check out [streamlit.io](https://streamlit.io)
-        - Jump into our [documentation](https://docs.streamlit.io)
-        - Ask a question in our [community
-          forums](https://discuss.streamlit.io)
-        ### See more complex demos
-        - Use a neural net to [analyze the Udacity Self-driving Car Image
-          Dataset](https://github.com/streamlit/demo-self-driving)
-        - Explore a [New York City rideshare dataset](https://github.com/streamlit/demo-uber-nyc-pickups)
-    """
+# See https://github.com/openai/openai-python/issues/715#issuecomment-1809203346
+def create_chat_completion(response: str, role: str = "assistant") -> ChatCompletion:
+    return ChatCompletion(
+        id="foo",
+        model="gpt-3.5-turbo",
+        object="chat.completion",
+        choices=[
+            Choice(
+                finish_reason="stop",
+                index=0,
+                message=ChatCompletionMessage(
+                    content=response,
+                    role=role,
+                ),
+            )
+        ],
+        created=int(datetime.datetime.now().timestamp()),
     )
 
 
-if __name__ == "__main__":
-    run()
+@patch("openai.resources.chat.Completions.create")
+def test_Chatbot(openai_create):
+    at = AppTest.from_file("Chatbot.py").run()
+    assert not at.exception
+    at.chat_input[0].set_value("Do you know any jokes?").run()
+    assert at.info[0].value == "Please add your OpenAI API key to continue."
+
+    JOKE = "Why did the chicken cross the road? To get to the other side."
+    openai_create.return_value = create_chat_completion(JOKE)
+    at.text_input(key="chatbot_api_key").set_value("sk-...")
+    at.chat_input[0].set_value("Do you know any jokes?").run()
+    print(at)
+    assert at.chat_message[1].markdown[0].value == "Do you know any jokes?"
+    assert at.chat_message[2].markdown[0].value == JOKE
+    assert at.chat_message[2].avatar == "assistant"
+    assert not at.exception
+
+
+@patch("langchain.llms.OpenAI.__call__")
+def test_Langchain_Quickstart(langchain_llm):
+    at = AppTest.from_file("pages/3_Langchain_Quickstart.py").run()
+    assert at.info[0].value == "Please add your OpenAI API key to continue."
+
+    RESPONSE = "1. The best way to learn how to code is by practicing..."
+    langchain_llm.return_value = RESPONSE
+    at.sidebar.text_input[0].set_value("sk-...")
+    at.button[0].set_value(True).run()
+    print(at)
+    assert at.info[0].value == RESPONSE
